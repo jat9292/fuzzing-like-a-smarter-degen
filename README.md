@@ -9,15 +9,18 @@ I wrote this as a learning exercise after reading through [h0mbre's](https://twi
 ```shell
 pip install hypothesis web3 solc-select crytic-compile
 ```
+
 ```
 solc-select install 0.8.12
 solc-select use 0.8.12
 ```
 
 Ganache
+
 ```
-npm i -g ganache-cli
+npm i -g ganache
 ```
+
 ## Usage
 
 ```shell

@@ -23,17 +23,10 @@ def fixture_ganache():
     eth = int(1e18 * 1e6)
     port = 8545
     proc = subprocess.Popen(
-        f"""ganache
-        --port {port}
-        --chain.networkId 1
-        --chain.chainId 1
-        --account {eth_privkey},{eth}
-        """.replace(
-            "\n", " "
-        ),
+        f"""ganache --port {port} --chain.networkId 1 --chain.chainId 1 --account {eth_privkey},{eth}""",
         shell=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT
+        stderr=subprocess.DEVNULL
     )
 
     sleep(3)
