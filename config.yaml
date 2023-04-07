@@ -1,0 +1,9 @@
+fuzz_runs: 1000
+seq_len: 300
+shrinking: true
+swarm_testing: true
+coverage_guidance: true
+constants_mining: true
+favor_long_sequence: true
+hypothesis_mode: "composite_strategy"
+anvil_port: 8545
