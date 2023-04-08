@@ -6,7 +6,6 @@ from hypothesis import given, settings
 def get_strategies(test_file_name):
     contract_names, functions = get_functions(test_file_name)
     for contract in contract_names:
-
         strats = []
         for func in functions[contract]:
             func_name = func["name"]

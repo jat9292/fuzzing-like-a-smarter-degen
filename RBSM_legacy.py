@@ -19,7 +19,7 @@ class InvariantException(Exception):
     pass
 
 
-def deploy_contract(w3, anvil, contract_names,test_file_name):
+def deploy_contract(w3, anvil, contract_names, test_file_name):
     """Deploy contract to the local anvil network."""
     abis, bytecodes = get_abi_and_bytecode(test_file_name)
     targets = []
@@ -60,13 +60,14 @@ def deploy_contract(w3, anvil, contract_names,test_file_name):
                             )
                             # TODO Deal with edge that contract names are the same
                             contract_name = internal_type.split(" ")[1]
-                            deployed_abi = get_abi_by_name(contract_name,test_file_name)
+                            deployed_abi = get_abi_by_name(
+                                contract_name, test_file_name
+                            )
                             targets.append(
                                 w3.eth.contract(abi=deployed_abi, address=deployed)
                             )
 
             targets.append(target)
-    
 
     return targets
 
@@ -108,7 +109,7 @@ def collect_functions(contract_names, functions, targets):
     return invariants, fuzz_candidates
 
 
-def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
+def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
     with open(config_file, "rb") as f:
         conf = yaml.safe_load(f.read())
     fuzz_runs = conf["fuzz_runs"]
@@ -120,13 +121,13 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
     favor_long_sequence = conf["favor_long_sequence"]
     anvil_port = conf["anvil_port"]
 
-    #Compile test contract
+    # Compile test contract
     try:
         subprocess.Popen(
             f"""crytic-compile --export-format standard {test_file_name}""",
             shell=True,
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
     except:
         raise Exception
@@ -134,11 +135,14 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
 
     # Anvil node
     anvil, proc = fixture_anvil(anvil_port)
+
     def exit_handler():
         proc.kill()
         proc.wait()
 
-    atexit.register(exit_handler) # closes the anvil node whenever the program stops (unexpectedly or not)
+    atexit.register(
+        exit_handler
+    )  # closes the anvil node whenever the program stops (unexpectedly or not)
 
     # Provider
     w3 = Web3(HTTPProvider(anvil.provider, request_kwargs={"timeout": 30}))
@@ -147,18 +151,19 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
     try:
         assert w3.isConnected()
     except AttributeError:
-         assert w3.is_connected()
+        assert w3.is_connected()
     except:
         sys.exit(-1)
 
     contract_names, functions = get_strategies(test_file_name)
-    targets = deploy_contract(w3, anvil, contract_names,test_file_name)
+    targets = deploy_contract(w3, anvil, contract_names, test_file_name)
     os.remove(f"crytic-export/{test_file_name.split('/')[-1]}.json")
     snapshotID = 0
     invariants, fuzz_candidates = collect_functions(contract_names, functions, targets)
-    
+
     from hypothesis import given, settings, note, Phase
     from hypothesis.stateful import RuleBasedStateMachine, rule, invariant, precondition
+
     stringStateFulFuzzer = f"""class StateFulFuzzer(RuleBasedStateMachine):
 
         def __init__(self):
@@ -196,24 +201,31 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
             assert result
     """
 
-    exec(stringStateFulFuzzer,locals(),globals())
-    
+    exec(stringStateFulFuzzer, locals(), globals())
+
     if shrinking:
-        phases_tuple = (Phase.explicit, Phase.reuse, Phase.generate, Phase.target, Phase.shrink)
+        phases_tuple = (
+            Phase.explicit,
+            Phase.reuse,
+            Phase.generate,
+            Phase.target,
+            Phase.shrink,
+        )
     else:
         phases_tuple = (Phase.explicit, Phase.reuse, Phase.generate, Phase.target)
 
     StateFulFuzzerTest = StateFulFuzzer.TestCase
-    StateFulFuzzerTest.settings = settings(phases=phases_tuple,
-        max_examples=fuzz_runs, stateful_step_count=seq_len, deadline=None
+    StateFulFuzzerTest.settings = settings(
+        phases=phases_tuple,
+        max_examples=fuzz_runs,
+        stateful_step_count=seq_len,
+        deadline=None,
     )
     try:
         StateFulFuzzerTest().runTest()
         print("No problem found, no invariant was broken")
     except AssertionError:
         print("Invariant broken")
-    
-
 
 
 if __name__ == "__main__":

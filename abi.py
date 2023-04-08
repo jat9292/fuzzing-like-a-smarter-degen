@@ -50,7 +50,7 @@ def get_abi_and_bytecode(test_file_name):
     return (abi, bytecode)
 
 
-def get_abi_by_name(contract_name,test_file_name):
+def get_abi_by_name(contract_name, test_file_name):
     abi = {}
 
     with open(f"crytic-export/{test_file_name.split('/')[-1]}.json") as crytic_out:
