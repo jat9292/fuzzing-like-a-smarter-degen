@@ -3,3 +3,4 @@ crytic-export/
 *.json
 .hypothesis/
 node_modules/
+.ipynb_checkpoints/

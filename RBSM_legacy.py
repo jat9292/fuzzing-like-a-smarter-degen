@@ -3,25 +3,15 @@ import os
 import random
 from datetime import timedelta
 from web3 import Web3, HTTPProvider, Account
-from web3._utils.method_formatters import BlockNotFound
 from node import fixture_anvil
 from abi import get_abi_and_bytecode, get_abi_by_name
-from utils import augment_strategies_with_constants
-from hypothesis import given, settings, note, Phase, HealthCheck, target
-from hypothesis.stateful import RuleBasedStateMachine, rule, invariant, precondition
-from hypothesis.core import Flaky
-from hypothesis import strategies as st
 from strategy import get_strategies
-from collections import Counter
 import subprocess
 import typer
 import atexit
 import yaml
-import string
+from hypothesis import HealthCheck
 
-class InvariantException(Exception):
-    """Invariant function is not defined properly."""
-    pass
 
 class InvariantException(Exception):
     """Invariant function is not defined properly."""
@@ -68,18 +58,18 @@ def deploy_contract(w3, anvil, contract_names,test_file_name):
                             deployed = target.functions[info["name"]]().call(
                                 {"from": w3.eth.default_account.address}
                             )
-
-                        # TODO Deal with edge that contract names are the same
-                        contract_name = internal_type.split(" ")[1]
-                        deployed_abi = get_abi_by_name(contract_name,test_file_name)
-                        targets.append(
-                            w3.eth.contract(abi=deployed_abi, address=deployed)
-                        )
+                            # TODO Deal with edge that contract names are the same
+                            contract_name = internal_type.split(" ")[1]
+                            deployed_abi = get_abi_by_name(contract_name,test_file_name)
+                            targets.append(
+                                w3.eth.contract(abi=deployed_abi, address=deployed)
+                            )
 
             targets.append(target)
     
 
     return targets
+
 
 def collect_functions(contract_names, functions, targets):
     invariants = []
@@ -117,6 +107,7 @@ def collect_functions(contract_names, functions, targets):
 
     return invariants, fuzz_candidates
 
+
 def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
     with open(config_file, "rb") as f:
         conf = yaml.safe_load(f.read())
@@ -129,6 +120,7 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
     favor_long_sequence = conf["favor_long_sequence"]
     anvil_port = conf["anvil_port"]
 
+    #Compile test contract
     try:
         subprocess.Popen(
             f"""crytic-compile --export-format standard {test_file_name}""",
@@ -161,90 +153,68 @@ def fuzz(test_file_name: str,config_file: str = typer.Argument("config.yaml")):
 
     contract_names, functions = get_strategies(test_file_name)
     targets = deploy_contract(w3, anvil, contract_names,test_file_name)
-
     os.remove(f"crytic-export/{test_file_name.split('/')[-1]}.json")
-
+    snapshotID = 0
     invariants, fuzz_candidates = collect_functions(contract_names, functions, targets)
+    
+    from hypothesis import given, settings, note, Phase
+    from hypothesis.stateful import RuleBasedStateMachine, rule, invariant, precondition
+    stringStateFulFuzzer = f"""class StateFulFuzzer(RuleBasedStateMachine):
 
-    if constants_mining:
-        fuzz_candidates = augment_strategies_with_constants(test_file_name,fuzz_candidates)
+        def __init__(self):
+            RuleBasedStateMachine.__init__(self)
+            self.resetted = False
 
+        @rule()
+        @precondition(lambda self: not self.resetted)
+        def reset_evm_state(self):
+            global snapshotID
+            if snapshotID==0:
+                snapshotID = w3.provider.make_request('evm_snapshot', [])['result']
+            else:
+                w3.provider.make_request('evm_revert',[snapshotID])
+                snapshotID = w3.provider.make_request('evm_snapshot', [])['result']
+            self.resetted = True
+    """
+
+    for k in range(len(fuzz_candidates)):
+        stringStateFulFuzzer += f"""
+        @rule(arg=fuzz_candidates[{k}][1])
+        @precondition(lambda self: self.resetted)
+        def {fuzz_candidates[k][0].fn_name}(self,arg):
+            func = fuzz_candidates[{k}][0]
+            func(arg).transact({{'from': account}})
+    """
+
+    for k in range(len(invariants)):
+        stringStateFulFuzzer += f"""
+        @invariant()
+        @precondition(lambda self: self.resetted)
+        def {invariants[k].fn_name}(self):
+            inv = invariants[{k}]
+            result = inv().call({{'from': account}})
+            assert result
+    """
+
+    exec(stringStateFulFuzzer,locals(),globals())
+    
     if shrinking:
         phases_tuple = (Phase.explicit, Phase.reuse, Phase.generate, Phase.target, Phase.shrink)
     else:
         phases_tuple = (Phase.explicit, Phase.reuse, Phase.generate, Phase.target)
 
-    operations = [st.tuples(st.just(fuzz_candidate[0]), fuzz_candidate[1]) for fuzz_candidate in fuzz_candidates]
-
-    @st.composite
-    def operations_list_strategy(draw):
-        # Generate a random subset of operations
-        if swarm_testing:
-            min_size_sampled = len(operations)-draw(st.integers(0,len(operations)-1))
-            unique_operations = st.sets(st.sampled_from(operations), min_size=min_size_sampled)
-        else:
-            unique_operations = st.just(operations)
-        selected_operations = draw(unique_operations)
-        if favor_long_sequence:
-            min_seq_len_sampled = seq_len-draw(st.integers(0,seq_len-1))
-        else:
-            min_seq_len_sampled = 1
-        selected_ops = st.lists(st.one_of(selected_operations), min_size=min_seq_len_sampled,max_size=seq_len)
-        return draw(selected_ops)
-
-    CounterCoverage = Counter()
-    snapshotID = 0
-    num_examples = 0
-    dico_first_seen = dict()
-
-    @settings(max_examples=fuzz_runs,phases=phases_tuple,deadline=None,suppress_health_check =list(HealthCheck),database=None)
-    @given(ops=operations_list_strategy())
-    def composite_test(ops):
-        seqCoverage = set()
-        nonlocal snapshotID
-        nonlocal num_examples
-        def update_coverage_frequency(seqCov):
-            if coverage_guidance:
-                CounterCoverage.update(seqCov)
-                covered_paths = [CounterCoverage[ID] for ID in seqCov]
-                if len(covered_paths)>0: # to avoid rare flakiness bug in hypothesis
-                    if 1 in covered_paths: # new path discovered
-                        selected_IDs = [ID for ID, count in CounterCoverage.items() if count == 1]
-                        for ID in selected_IDs:
-                            dico_first_seen[ID] = num_examples
-                        target(num_examples)
-                    else:
-                        selected_values = [dico_first_seen[ID] for ID in seqCov]
-                        target(max(selected_values)) # this reduces flakiness of hypothesis, by making the coverage score "almost" stationary, i.e relying on an almost stationary global state, compared to a non-stationary energy score like in AFLplus which would change for each sampled test example
-                else:
-                    target(-10000000000)
-        if snapshotID==0:
-            snapshotID = w3.provider.make_request('evm_snapshot', [])['result']
-        else:
-            w3.provider.make_request('evm_revert',[snapshotID])
-            snapshotID = w3.provider.make_request('evm_snapshot', [])['result']
-        num_examples+=1
-        for op in ops:
-            func = op[0]
-            try:
-                tx = func(op[1]).transact({'from': account})
-                if coverage_guidance:
-                    structLogs = w3.provider.make_request('debug_traceTransaction',[tx.hex(),  {'disableStorage': True,'disableStack': True}])['result']['structLogs']
-                    structLogs_filtered = [ele['pc'] for ele in structLogs if ele['depth']==1]
-                    seqCoverage.update(set(structLogs_filtered))
-                for inv in invariants:
-                    result = inv().call({'from': account})
-                    assert result
-            except BlockNotFound: # to avoid rare error when anvil fails to detect last block
-                pass
-
-        update_coverage_frequency(seqCoverage)
-    
+    StateFulFuzzerTest = StateFulFuzzer.TestCase
+    StateFulFuzzerTest.settings = settings(phases=phases_tuple,
+        max_examples=fuzz_runs, stateful_step_count=seq_len, deadline=None
+    )
     try:
-        composite_test()
+        StateFulFuzzerTest().runTest()
         print("No problem found, no invariant was broken")
-    except AssertionError or Flaky:
+    except AssertionError:
         print("Invariant broken")
+    
+
+
 
 if __name__ == "__main__":
     typer.run(fuzz)

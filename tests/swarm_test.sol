@@ -1,16 +1,18 @@
 pragma solidity 0.8.19;
 
 contract InvariantBreaker {
-    bool public flag0 = true;
+    uint counter = 0;
     bool public flag1 = true;
 
-    function set0(int256 val) public returns (bool) {
-        if (val % 100 == 0) flag0 = false;
-        return flag0;
+    function reset(int256 val) public {
+        counter = 0;
     }
 
-    function set1(int256 val) public returns (bool) {
-        if (val % 10 == 0 && !flag0) flag1 = false;
+    function set(int256 val) public returns (bool) {
+        counter = counter + 1;
+        if (counter == 50) {
+            flag1 = false;
+        }
         return flag1;
     }
 }
