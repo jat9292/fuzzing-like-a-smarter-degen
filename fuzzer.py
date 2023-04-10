@@ -228,7 +228,6 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
         phases=phases_tuple,
         deadline=None,
         suppress_health_check=list(HealthCheck),
-        database=None,
     )
     @given(ops=operations_list_strategy())
     def composite_test(ops):
