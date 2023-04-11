@@ -3,7 +3,7 @@ import os
 import random
 from datetime import timedelta
 from web3 import Web3, HTTPProvider, Account
-from web3._utils.method_formatters import BlockNotFound
+from web3._utils.method_formatters import BlockNotFound, TransactionNotFound
 from node import fixture_anvil
 from abi import get_abi_and_bytecode, get_abi_by_name
 from utils import augment_strategies_with_constants
@@ -167,7 +167,16 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
         sys.exit(-1)
 
     contract_names, functions = get_strategies(test_file_name)
-    targets = deploy_contract(w3, anvil, contract_names, test_file_name)
+
+    MAX_RETRY = (
+        100  # to avoid rare connection error when deploying contracts to local node
+    )
+    for i in range(MAX_RETRY):
+        try:
+            targets = deploy_contract(w3, anvil, contract_names, test_file_name)
+            break
+        except (TransactionNotFound,ValueError):
+            continue
 
     os.remove(f"crytic-export/{test_file_name.split('/')[-1]}.json")
 
@@ -221,6 +230,7 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
     CounterCoverage = Counter()
     snapshotID = 0
     num_examples = 0
+    current_max = 0
     dico_first_seen = dict()
 
     @settings(
@@ -234,8 +244,10 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
         seqCoverage = set()
         nonlocal snapshotID
         nonlocal num_examples
+        nonlocal current_max
 
         def update_coverage_frequency(seqCov):
+            nonlocal current_max
             if coverage_guidance:
                 CounterCoverage.update(seqCov)
                 covered_paths = [CounterCoverage[ID] for ID in seqCov]
@@ -246,14 +258,15 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
                         ]
                         for ID in selected_IDs:
                             dico_first_seen[ID] = num_examples
+                        current_max = num_examples
                         target(num_examples)
                     else:
                         selected_values = [dico_first_seen[ID] for ID in seqCov]
-                        target(
-                            max(selected_values)
-                        )  # this reduces flakiness of hypothesis, by making the coverage score "almost" stationary, i.e relying on an almost stationary global state, compared to a non-stationary energy score like in AFLplus which would change for each sampled test example
-                else:
-                    target(-10000000000)
+                        max_value = max(selected_values)
+                        if current_max == max_value:
+                            target(num_examples)
+                        else:
+                            target(max_value)
 
         if snapshotID == 0:
             snapshotID = w3.provider.make_request("evm_snapshot", [])["result"]
