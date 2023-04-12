@@ -1,8 +1,16 @@
+#fuzz_runs is the number of sequence of transactions that are generated during the fuzzing campaign
 fuzz_runs: 1000
+#seq_len is the maximal number of transactions contained in a single sequence, the test node is reset after each sequence
 seq_len: 100
+#shrinking will try to find the simplest counter-example if an invariant is broken (warning: hypothesis fails to do efficient shrinking for complex sequences)
 shrinking: true
+#swarm_testing allows deeper exploration of the code and find more bugs by selecting a subset of functions to call to generating more diverse sequences
 swarm_testing: true
+#coverage_guidance is steering the fuzzer towards sequence of transactions which are triggering new or rarely seen program counters, allowing deeper exploration of the code
 coverage_guidance: true
+#constants_mining is detecting hard-coded literals in the code, allowing the fuzzer to directly sample among those constants, this will allow it to find more bugs
 constants_mining: true
+#Use favor_long_sequence if you want the fuzzer to generate more often long sequences of transactions, close to maximum value seq_len. In general it helps finding more bugs.
 favor_long_sequence: true
+#anvil_port is the port used for the anvil test node. Use different ports if you launch several instances of the fuzzer in parallel.
 anvil_port: 8545

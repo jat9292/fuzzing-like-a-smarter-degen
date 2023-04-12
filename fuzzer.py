@@ -18,6 +18,7 @@ import typer
 import atexit
 import yaml
 import string
+import time
 
 
 class InvariantException(Exception):
@@ -53,6 +54,9 @@ def deploy_contract(w3, anvil, contract_names, test_file_name):
             anvil.eth_privkey,
         )
         tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        time.sleep(
+            0.5
+        )  # to avoid rare connection error when deploying contracts to local node
         address = w3.eth.get_transaction_receipt(tx_hash)["contractAddress"]
         target = w3.eth.contract(address, abi=abi)
 
@@ -167,16 +171,7 @@ def fuzz(test_file_name: str, config_file: str = typer.Argument("config.yaml")):
         sys.exit(-1)
 
     contract_names, functions = get_strategies(test_file_name)
-
-    MAX_RETRY = (
-        100  # to avoid rare connection error when deploying contracts to local node
-    )
-    for i in range(MAX_RETRY):
-        try:
-            targets = deploy_contract(w3, anvil, contract_names, test_file_name)
-            break
-        except (TransactionNotFound,ValueError):
-            continue
+    targets = deploy_contract(w3, anvil, contract_names, test_file_name)
 
     os.remove(f"crytic-export/{test_file_name.split('/')[-1]}.json")
 
